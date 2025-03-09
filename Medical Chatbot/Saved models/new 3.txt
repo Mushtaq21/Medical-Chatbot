@@ -1,0 +1,150 @@
+import streamlit as st
+import pandas as pd
+import os
+import xml.etree.ElementTree as ET
+import spacy
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from langdetect import detect
+from deep_translator import GoogleTranslator
+
+# Load spaCy model
+nlp = spacy.load("en_core_web_sm")
+
+# Dataset path
+DATASET_PATH = "C:\\Users\\Aditya\\Desktop\\mustu bhai\\Medical Chatbot\\MedQuAD-master"
+CACHE_FILE = "cached_medquad_data.csv"
+
+@st.cache_data
+def load_medquad_cached():
+    if os.path.exists(CACHE_FILE):
+        return pd.read_csv(CACHE_FILE)
+    else:
+        df = load_medquad_from_xml(DATASET_PATH)
+        df.to_csv(CACHE_FILE, index=False)
+        return df
+
+def load_medquad_from_xml(root_folder):
+    data = []
+    for folder in os.listdir(root_folder):
+        folder_path = os.path.join(root_folder, folder)
+        if os.path.isdir(folder_path):
+            for file in os.listdir(folder_path):
+                if file.endswith(".xml"):
+                    file_path = os.path.join(folder_path, file)
+                    tree = ET.parse(file_path)
+                    root = tree.getroot()
+                    for qa in root.findall(".//QAPair"):
+                        question_elem = qa.find("Question")
+                        answer_elem = qa.find("Answer")
+                        question = question_elem.text.strip() if question_elem is not None and question_elem.text else None
+                        answer = answer_elem.text.strip() if answer_elem is not None and answer_elem.text else None
+                        if question and answer:
+                            data.append({"question": question, "answer": answer})
+    return pd.DataFrame(data)
+
+def preprocess_text(text):
+    doc = nlp(text.lower())
+    return " ".join([token.lemma_ for token in doc if not token.is_stop and not token.is_punct])
+
+@st.cache_data
+def train_retrieval_model(df):
+    vectorizer = TfidfVectorizer(preprocessor=preprocess_text)
+    tfidf_matrix = vectorizer.fit_transform(df['question'])
+    return vectorizer, tfidf_matrix
+
+def retrieve_answer(user_question, df, vectorizer, tfidf_matrix):
+    user_vector = vectorizer.transform([user_question])
+    similarities = cosine_similarity(user_vector, tfidf_matrix).flatten()
+    best_match_idx = similarities.argmax()
+    return df.iloc[best_match_idx]['answer']
+
+def detect_language(text):
+    try:
+        lang = detect(text)
+        return lang if lang in ["hi", "kn", "mr"] else "en"
+    except:
+        return "en"
+
+def translate_text(text, src_lang, target_lang):
+    try:
+        if src_lang == target_lang:
+            return text
+        return GoogleTranslator(source=src_lang, target=target_lang).translate(text)
+    except:
+        return text  
+
+st.set_page_config(page_title="Medical Q&A Chatbot", page_icon="💬", layout="centered")
+
+st.title("💬 Medical Q&A Chatbot")
+st.success("✅ Loading MedQuAD dataset from cache...")
+
+if "qa_history" not in st.session_state:
+    st.session_state.qa_history = []
+
+df = load_medquad_cached()
+
+if not df.empty:
+    vectorizer, tfidf_matrix = train_retrieval_model(df)
+
+    # ✅ Initial question input
+    new_question = st.text_input("💬 Ask a medical question:", key="new_question_input")
+
+    if new_question and new_question.strip() and "first_answer" not in st.session_state:
+        detected_lang = detect_language(new_question)
+        translated_query = translate_text(new_question, detected_lang, "en")
+        
+        answer = retrieve_answer(translated_query, df, vectorizer, tfidf_matrix)
+        translated_answer = translate_text(answer, "en", detected_lang)
+
+        # ✅ Store first Q&A and display it
+        st.session_state.qa_history.append({
+            "question": new_question,
+            "answer": translated_answer
+        })
+        st.session_state.first_answer = translated_answer  # Store it for immediate display
+        st.rerun()
+
+    # ✅ Display the first question's answer if available
+    if "first_answer" in st.session_state:
+        st.markdown("""---""")
+        st.subheader(f"📝 Your Question:")
+        st.info(st.session_state.qa_history[0]["question"])
+        
+        st.subheader("💡 Answer:")
+        st.success(st.session_state.qa_history[0]["answer"])
+
+    # ✅ Show "Ask another question" only after answering the first
+    if "first_answer" in st.session_state:
+        followup_question = st.text_input("💬 Ask another question:", key=f"followup_question_{len(st.session_state.qa_history)}")
+
+        if followup_question and followup_question.strip():
+            detected_lang = detect_language(followup_question)
+            translated_query = translate_text(followup_question, detected_lang, "en")
+
+            # ✅ Fetch a **new** answer for the follow-up
+            answer = retrieve_answer(translated_query, df, vectorizer, tfidf_matrix)
+            translated_answer = translate_text(answer, "en", detected_lang)
+
+            # ✅ Store follow-up question and answer **separately**
+            st.session_state.qa_history.append({
+                "question": followup_question,
+                "answer": translated_answer
+            })
+            
+            # ✅ Force Streamlit to update UI
+            st.session_state.first_answer = None  # Reset first answer to allow new question updates
+            st.rerun()
+
+    # ✅ Display follow-up answers correctly
+    if len(st.session_state.qa_history) > 1:
+        st.markdown("""---""")
+        for idx, qa in enumerate(st.session_state.qa_history[1:], start=1):
+            st.subheader(f"📝 Follow-up Question {idx}:")
+            st.info(qa["question"])
+
+            st.subheader("💡 Answer:")
+            st.success(qa["answer"])
+
+else:
+    st.error("❌ No valid question-answer pairs found in the dataset.")
