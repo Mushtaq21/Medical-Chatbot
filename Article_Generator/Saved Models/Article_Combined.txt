@@ -1,0 +1,67 @@
+import random
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# List of models to test
+models = {
+    "GPT-Neo": "EleutherAI/gpt-neo-125M",
+    "Mistral": "mistralai/Mistral-7B",
+    "Falcon": "tiiuae/falcon-7b"
+}
+
+# Predefined list of random topics
+topics = [
+    "The importance of space exploration",
+    "The impact of climate change on wildlife",
+    "The history of the internet",
+    "How do vaccines work?",
+    "The psychology behind dreams",
+    "The rise of electric vehicles",
+    "Ancient civilizations and their contributions",
+    "The benefits of mindfulness and meditation",
+    "How cryptocurrencies are changing the economy",
+    "The effects of music on the human brain"
+]
+
+# Select a random topic
+random_topic = random.choice(topics)
+print(f"Generating an article on: {random_topic}\n")
+
+# Function to load model and tokenizer
+def load_model(model_name):
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name)
+    
+    # Set padding token
+    tokenizer.pad_token = tokenizer.eos_token
+    model.config.pad_token_id = model.config.eos_token_id
+    return model, tokenizer
+
+# Function to generate an article
+def generate_article(model, tokenizer, prompt, max_length=300):
+    inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+    
+    # Generate text
+    outputs = model.generate(
+        inputs["input_ids"],
+        attention_mask=inputs["attention_mask"],
+        max_length=max_length,
+        num_return_sequences=1,
+        no_repeat_ngram_size=2,
+        top_p=0.95,
+        top_k=50,
+        temperature=0.7,
+        do_sample=True,
+        repetition_penalty=1.2,
+        pad_token_id=model.config.eos_token_id
+    )
+
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+# Run generation for each model
+for model_name, model_path in models.items():
+    print(f"### Generating with {model_name} ###\n")
+    model, tokenizer = load_model(model_path)
+    prompt = f"Write an informative article about {random_topic}."
+    article = generate_article(model, tokenizer, prompt)
+    print(f"Generated Article using {model_name}:\n{article}\n" + "-"*80 + "\n")

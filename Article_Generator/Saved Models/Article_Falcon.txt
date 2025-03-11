@@ -1,0 +1,50 @@
+import random
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+
+# Load Falcon model and tokenizer
+model_name = "tiiuae/falcon-7b"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(model_name)
+
+# Set padding token
+tokenizer.pad_token = tokenizer.eos_token
+model.config.pad_token_id = model.config.eos_token_id
+
+# Predefined random topics
+topics = [
+    "The role of artificial intelligence in modern medicine",
+    "The impact of social media on mental health",
+    "The future of renewable energy sources",
+    "The evolution of space exploration",
+    "The importance of biodiversity conservation"
+]
+
+# Pick a random topic
+random_topic = random.choice(topics)
+print(f"Generating an article on: {random_topic}\n")
+
+# Function to generate an article
+def generate_article(prompt, max_length=300):
+    inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+
+    outputs = model.generate(
+        inputs["input_ids"],
+        attention_mask=inputs["attention_mask"],
+        max_length=max_length,
+        num_return_sequences=1,
+        no_repeat_ngram_size=2,
+        top_p=0.95,
+        top_k=50,
+        temperature=0.7,
+        do_sample=True,
+        repetition_penalty=1.2,
+        pad_token_id=model.config.eos_token_id
+    )
+
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+# Generate and print the article
+prompt = f"Write an informative article about {random_topic}."
+article = generate_article(prompt)
+print("Generated Article:\n", article)
